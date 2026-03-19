@@ -14,3 +14,7 @@ venv/
 # IDE
 .idea/
 .vscode/
+
+# Generated files
+prompt_for_llm.txt
+*.log
