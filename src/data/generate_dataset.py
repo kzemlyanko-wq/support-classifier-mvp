@@ -3,7 +3,10 @@ import requests
 import time
 import random
 import os
+import math
 from dotenv import load_dotenv
+from pathlib import Path
+from prompts import PROMPT_GENERATE_TEXT
 
 # Загружаем переменные окружения (для API ключей)
 load_dotenv()
@@ -14,10 +17,10 @@ PRIORITIES = ['High', 'Medium', 'Low']
 
 # Настройки генерации
 TOTAL_TARGET = 500  # Целевое количество строк (минимум 500 по кейсу)
-SAMPLES_PER_COMBINATION = TOTAL_TARGET // (len(CATEGORIES) * len(PRIORITIES))  # ~33 на комбинацию
+SAMPLES_PER_COMBINATION = math.ceil(TOTAL_TARGET / (len(CATEGORIES) * len(PRIORITIES)))
 
 
-def call_llm_api(prompt):
+def call_llm_api(prompt, category, priority):
     """
     Вызывает API нейросети для генерации текста.
     
@@ -28,6 +31,8 @@ def call_llm_api(prompt):
     
     Args:
         prompt (str): Промпт для нейросети
+        category (str): Категория обращения (для заглушки)
+        priority (str): Приоритет (для заглушки)
     
     Returns:
         list: Список сгенерированных текстов
@@ -46,7 +51,10 @@ def call_llm_api(prompt):
     }
     payload = {
         "model": "GigaChat",
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": "Ты полезный ассистент для генерации данных."},
+            {"role": "user", "content": prompt}
+        ],
         "temperature": 0.7
     }
     
@@ -62,7 +70,7 @@ def call_llm_api(prompt):
     # === ТЕКУЩАЯ ЗАГЛУШКА (для тестирования структуры) ===
     print("   ⚠️ Используется заглушка (mock). Партнёр подключит реальное API.")
     
-    # Генерируем фейковые данные для проверки структуры
+    # Используем category и priority из параметров
     templates = {
         'Payment': [
             "У меня не проходит оплата картой",
@@ -101,10 +109,22 @@ def call_llm_api(prompt):
         ]
     }
     
+    # Добавляем ключевые слова по приоритетам
+    priority_keywords = {
+        'High': ['срочно', 'немедленно', 'быстро', 'ужас', 'катастрофа'],
+        'Medium': ['подскажите', 'вопрос', 'помогите', 'не понимаю'],
+        'Low': ['спасибо', 'интересно', 'всё хорошо', 'благодарю']
+    }
+    
     # Добавляем вариативности (опечатки, разные стили)
     texts = []
     for i in range(SAMPLES_PER_COMBINATION):
         base_text = random.choice(templates.get(category, templates['Other']))
+        
+        # Добавляем ключевые слова по приоритету (20% случаев)
+        if random.random() < 0.2:
+            keyword = random.choice(priority_keywords.get(priority, []))
+            base_text = f"{base_text}, {keyword}!"
         
         # Добавляем немного вариативности
         variations = [
@@ -113,6 +133,7 @@ def call_llm_api(prompt):
             "Здравствуйте! " + base_text,
             "Помогите! " + base_text,
             base_text + " Уже жду ответа.",
+            "Добрый день, " + base_text.lower(),
         ]
         
         # 20% шанс добавить опечатку (для реалистичности)
@@ -142,20 +163,11 @@ def generate_batch(category, priority, count=10):
     Returns:
         list: Список текстов обращений
     """
-    prompt = f"""
-    Сгенерируй {count} примеров обращений клиентов на русском языке.
-    Категория: {category}
-    Приоритет: {priority}
+    # Используем промпт из prompts.py
+    prompt = PROMPT_GENERATE_TEXT.format(count=count)
     
-    Требования:
-    - Тексты от 5 до 50 слов
-    - Добавь 1-2 опечатки в 20% случаев
-    - Разный стиль (вежливый, нейтральный, возмущенный)
-    
-    Верни только текст обращений, каждый с новой строки.
-    """
-    
-    texts = call_llm_api(prompt)
+    # Передаём category и priority в call_llm_api
+    texts = call_llm_api(prompt, category, priority)
     return texts
 
 
@@ -172,8 +184,10 @@ def validate_data(df):
     stats = {
         'total_rows': len(df),
         'empty_texts': df['text'].isna().sum(),
+        'empty_texts_percent': (df['text'].isna().sum() / len(df) * 100) if len(df) > 0 else 0,
         'category_distribution': df['category'].value_counts().to_dict(),
-        'priority_distribution': df['priority'].value_counts().to_dict()
+        'priority_distribution': df['priority'].value_counts().to_dict(),
+        'avg_text_length': df['text'].str.len().mean()
     }
     return stats
 
@@ -186,6 +200,8 @@ def main():
     print(f"📊 Цель: {TOTAL_TARGET} строк")
     print(f"📁 Категории: {CATEGORIES}")
     print(f"⚡ Приоритеты: {PRIORITIES}")
+    print(f"📈 Строк на комбинацию: {SAMPLES_PER_COMBINATION}")
+    print(f"📈 Итого строк: {SAMPLES_PER_COMBINATION * len(CATEGORIES) * len(PRIORITIES)}")
     print("-" * 50)
     
     all_data = []
@@ -214,22 +230,36 @@ def main():
     print("-" * 50)
     print("📈 Статистика:")
     print(f"   Всего строк: {stats['total_rows']}")
-    print(f"   Пустых текстов: {stats['empty_texts']}")
+    print(f"   Пустых текстов: {stats['empty_texts']} ({stats['empty_texts_percent']:.1f}%)")
+    print(f"   Средняя длина текста: {stats['avg_text_length']:.0f} символов")
     print(f"   Распределение по категориям: {stats['category_distribution']}")
     print(f"   Распределение по приоритетам: {stats['priority_distribution']}")
     
+    # Используем Path для надёжного пути
+    output_path = Path('data/raw_dataset.csv')
+    
+    # Создаём папку data, если её нет
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     # Сохраняем в CSV
-    output_path = 'data/raw_dataset.csv'
     df.to_csv(output_path, index=False, encoding='utf-8-sig')
     print("-" * 50)
     print(f"✅ Сгенерировано {len(df)} строк!")
-    print(f"💾 Сохранено в: {output_path}")
+    print(f"💾 Сохранено в: {output_path.absolute()}")
     
     # Проверка на минимальное требование (500 строк по кейсу)
     if len(df) >= 500:
         print("🎯 Требование кейса выполнено (≥500 строк)!")
     else:
         print("⚠️ Внимание: нужно минимум 500 строк для Показа 1!")
+    
+    # Проверка на сбалансированность классов (требование из кейса)
+    min_category = min(stats['category_distribution'].values())
+    max_category = max(stats['category_distribution'].values())
+    if max_category / min_category < 1.2:
+        print("✅ Классы сбалансированы!")
+    else:
+        print("⚠️ Внимание: классы несбалансированы!")
 
 
 if __name__ == '__main__':
