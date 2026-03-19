@@ -6,7 +6,8 @@ __pycache__/
 venv/
 
 # Data
-*.csv
+!data/sample_dataset.csv    # Разрешить этот файл
+*.csv                       # Игнорировать все остальные CSV
 *.pkl
 *.pt
 
