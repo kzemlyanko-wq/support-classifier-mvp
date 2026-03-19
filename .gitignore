@@ -18,3 +18,8 @@ venv/
 # Generated files
 prompt_for_llm.txt
 *.log
+
+# Secrets
+.env
+*.key
+*.secret
